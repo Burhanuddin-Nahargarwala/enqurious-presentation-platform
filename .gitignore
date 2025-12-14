@@ -1,0 +1,37 @@
+# =====================
+# Dependencies
+# =====================
+node_modules/
+
+# =====================
+# Environment files
+# =====================
+.env
+.env.*
+
+# =====================
+# Build outputs
+# =====================
+frontend/dist/
+
+# =====================
+# Runtime / uploads
+# =====================
+backend/uploads/
+
+# =====================
+# Logs
+# =====================
+*.log
+build.log.txt
+
+# =====================
+# OS / Editor
+# =====================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+mongodb-docker-command.txt
+Prezento Demo.mp4
