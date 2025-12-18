@@ -202,8 +202,16 @@ router.post('/upload', authMiddleware, (req, res) => {
                 thumbnailPath: thumbnailPathWeb || undefined,
             });
 
-            await newPresentation.save();
-            console.log('Presentation saved to DB:', newPresentation._id);
+            console.log('Saving presentation to database...');
+            try {
+                await newPresentation.save();
+                console.log('Presentation saved to DB:', newPresentation._id);
+            } catch (saveError) {
+                console.error('Database Save Error:', saveError);
+                // Clean up folder if save fails
+                await fsPromises.rm(presentationDirFs, { recursive: true, force: true }).catch(e => console.error('Cleanup error:', e));
+                throw new Error(`Database save failed: ${saveError.message}`);
+            }
 
             res.status(201).json({
                 message: 'Presentation uploaded successfully',
