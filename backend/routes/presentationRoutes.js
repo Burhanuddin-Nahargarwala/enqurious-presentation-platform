@@ -31,185 +31,189 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage,
     fileFilter: function (req, file, cb) {
+        console.log('Uploading file:', file.originalname, 'Mimetype:', file.mimetype);
+        // Relaxed MIME type check
         if (
             file.mimetype === 'application/zip' ||
             file.mimetype === 'application/x-zip-compressed' ||
+            file.mimetype === 'application/x-zip' ||
+            file.mimetype === 'application/octet-stream' || // Common on Windows
+            file.originalname.toLowerCase().endsWith('.zip') || // Fallback to extension
             (file.mimetype && file.mimetype.startsWith('image/'))
         ) {
             cb(null, true);
         } else {
+            console.error('Rejected file type:', file.mimetype);
             cb(new Error('Only .zip files are allowed!'), false);
         }
     },
     limits: {
-        fileSize: 20 * 1024 * 1024, // 20MB limit (zip + optional image)
+        fileSize: 50 * 1024 * 1024, // Increased to 50MB
     }
 });
 
 // @route   POST /api/presentations/upload
 // @desc    Upload a new presentation
 // @access  Private
-router.post('/upload', authMiddleware, upload.fields([
-    { name: 'presentation', maxCount: 1 },
-    { name: 'thumbnail', maxCount: 1 }
-]), async (req, res) => {
-    try {
-        const presFiles = req.files && req.files.presentation;
-        if (!presFiles || !presFiles[0]) {
-            return res.status(400).json({ message: 'No file uploaded' });
+router.post('/upload', authMiddleware, (req, res) => {
+    const uploadMiddleware = upload.fields([
+        { name: 'presentation', maxCount: 1 },
+        { name: 'thumbnail', maxCount: 1 }
+    ]);
+
+    uploadMiddleware(req, res, async (err) => {
+        if (err) {
+            console.error('Multer Error:', err);
+            if (err instanceof multer.MulterError) {
+                return res.status(400).json({ message: `Upload error: ${err.message}` });
+            }
+            return res.status(400).json({ message: err.message });
         }
 
-        const { title, description, domain } = req.body;
-        const userId = req.user.id;
-
-        // Create a unique folder for the presentation
-        const presentationId = `presentation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const uploadsRootFs = path.join(__dirname, '..', 'uploads');
-        const presentationDirFs = path.join(uploadsRootFs, presentationId);
-
-        // Create the directory
-        await fsPromises.mkdir(presentationDirFs, { recursive: true });
-
-        // Extract the zip file
-        const zipPath = presFiles[0].path;
-        const thumbFile = req.files && req.files.thumbnail && req.files.thumbnail[0];
-
-        // Read manifest directly from the ZIP (to get order and subfolder)
-        let manifestSlidesFromZip = null;
-        let manifestSubdirInZip = '';
         try {
-            const directory = await unzipper.Open.file(zipPath);
-            // Prefer a top-level manifest, else the first manifest found
-            let manifestEntry = directory.files.find(f => f.path === 'manifest.json');
-            if (!manifestEntry) {
-                manifestEntry = directory.files.find(f => f.path.toLowerCase().endsWith('/manifest.json'))
-                    || directory.files.find(f => path.posix.basename(f.path).toLowerCase() === 'manifest.json');
+            console.log('File upload received. Processing...');
+            const presFiles = req.files && req.files.presentation;
+            if (!presFiles || !presFiles[0]) {
+                return res.status(400).json({ message: 'No file uploaded' });
             }
-            if (manifestEntry) {
-                const buf = await manifestEntry.buffer();
-                const manifest = JSON.parse(buf.toString('utf8'));
-                if (Array.isArray(manifest.slides) && manifest.slides.length > 0) {
-                    manifestSlidesFromZip = manifest.slides;
-                    const dirName = path.posix.dirname(manifestEntry.path);
-                    manifestSubdirInZip = (dirName && dirName !== '.') ? dirName : '';
-                }
-            }
-        } catch (e) {
-            // If we can't read from zip, proceed with extraction and fallback
-        }
 
-        // Extract the ZIP deterministically: write each entry to disk
-        const zipDir = await unzipper.Open.file(zipPath);
-        for (const entry of zipDir.files) {
-            if (entry.type !== 'File') continue;
-            // Normalize POSIX path, prevent path traversal
-            const posixPath = entry.path;
-            if (posixPath.includes('..')) continue;
-            const parts = posixPath.split('/').filter(Boolean);
-            const destPath = path.join(presentationDirFs, ...parts);
-            const destDir = path.dirname(destPath);
-            await fsPromises.mkdir(destDir, { recursive: true });
+            const { title, description, domain } = req.body;
+            const userId = req.user.id;
+
+            // Create a unique folder for the presentation
+            const presentationId = `presentation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const uploadsRootFs = path.join(__dirname, '..', 'uploads');
+            const presentationDirFs = path.join(uploadsRootFs, presentationId);
+
+            console.log(`Creating presentation directory: ${presentationDirFs}`);
+            await fsPromises.mkdir(presentationDirFs, { recursive: true });
+
+            // Extract the zip file
+            const zipPath = presFiles[0].path;
+            const thumbFile = req.files && req.files.thumbnail && req.files.thumbnail[0];
+
+            console.log(`Extracting zip from: ${zipPath}`);
+
+            // Use simple extraction
             await new Promise((resolve, reject) => {
-                entry.stream()
-                    .pipe(fs.createWriteStream(destPath))
-                    .on('error', reject)
-                    .on('finish', resolve)
-                    .on('close', resolve);
+                fs.createReadStream(zipPath)
+                    .pipe(unzipper.Extract({ path: presentationDirFs }))
+                    .on('close', resolve)
+                    .on('error', reject);
             });
-        }
+            console.log('Extraction complete.');
 
-        // Remove the temporary zip file
-        await fsPromises.unlink(zipPath);
+            // Remove the temporary zip file
+            await fsPromises.unlink(zipPath);
 
-        // Determine the base directory that actually contains slides (filesystem path)
-        let baseDirFs = presentationDirFs;
-        if (manifestSubdirInZip) {
-            // Convert posix subdir to native path
-            const parts = manifestSubdirInZip.split('/').filter(Boolean);
-            baseDirFs = path.join(presentationDirFs, ...parts);
-        }
+            // Determine the base directory that actually contains slides (filesystem path)
+            let baseDirFs = presentationDirFs;
+            // Check for manifest.json at root
+            let manifestSlides = null;
+            let manifestSubdirInZip = '';
 
-        let slides = null;
-        if (manifestSlidesFromZip) {
-            // Trust manifest order as source of truth
-            slides = manifestSlidesFromZip.slice();
-        } else {
-            // Fallback path: look for manifest within extracted directories
-            const tryReadManifestSlides = async (dir) => {
+            // Try to find manifest.json in the extracted files
+            const findManifest = async (dir) => {
                 try {
-                    const data = await fsPromises.readFile(path.join(dir, 'manifest.json'), 'utf8');
-                    const manifest = JSON.parse(data);
-                    if (Array.isArray(manifest.slides) && manifest.slides.length > 0) {
-                        return manifest.slides;
+                    const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+                    for (const entry of entries) {
+                        if (entry.name === 'manifest.json') {
+                            return dir;
+                        }
+                        if (entry.isDirectory()) {
+                            // Check one level deep
+                            const subPath = path.join(dir, entry.name);
+                            const subEntries = await fsPromises.readdir(subPath);
+                            if (subEntries.includes('manifest.json')) {
+                                return subPath;
+                            }
+                        }
                     }
-                    return null;
-                } catch (e) {
-                    return null;
-                }
+                } catch (e) { }
+                return null;
             };
 
-            slides = await tryReadManifestSlides(baseDirFs);
-            if (!slides) {
+            const manifestDir = await findManifest(presentationDirFs);
+            if (manifestDir) {
                 try {
-                    const entries = await fsPromises.readdir(baseDirFs, { withFileTypes: true });
-                    const subdirs = entries.filter((e) => e.isDirectory());
-                    if (subdirs.length === 1) {
-                        baseDirFs = path.join(baseDirFs, subdirs[0].name);
-                        slides = await tryReadManifestSlides(baseDirFs);
+                    const data = await fsPromises.readFile(path.join(manifestDir, 'manifest.json'), 'utf8');
+                    const manifest = JSON.parse(data);
+                    if (Array.isArray(manifest.slides) && manifest.slides.length > 0) {
+                        manifestSlides = manifest.slides;
+                        baseDirFs = manifestDir;
+                        // Calculate relative path for web serving
+                        manifestSubdirInZip = path.relative(presentationDirFs, manifestDir).replace(/\\/g, '/');
                     }
                 } catch (e) {
-                    // ignore and fallback to listing
+                    console.warn('Found manifest but failed to read/parse:', e);
                 }
             }
+
+            let slides = manifestSlides;
             if (!slides) {
-                const files = await fsPromises.readdir(baseDirFs);
-                slides = files.filter((file) => file.toLowerCase().endsWith('.html')).sort();
-            }
-        }
+                console.log('No valid manifest found, falling back to scanning for HTML files.');
+                // Fallback: scan for HTML files
+                // If the zip contained a single folder, maybe the slides are in there
+                const entries = await fsPromises.readdir(presentationDirFs, { withFileTypes: true });
+                const subdirs = entries.filter(e => e.isDirectory());
 
-        // Move optional thumbnail into presentation root and compute web path
-        let thumbnailPathWeb = '';
-        if (thumbFile) {
-            try {
-                const ext = path.extname(thumbFile.originalname) || path.extname(thumbFile.filename) || '.png';
-                const destThumbFs = path.join(presentationDirFs, `thumbnail${ext}`);
-                await fsPromises.rename(thumbFile.path, destThumbFs);
-                const posixThumb = path.posix.join('/uploads', presentationId, `thumbnail${ext}`);
-                thumbnailPathWeb = posixThumb;
-            } catch (e) {
-                console.error('Failed to move thumbnail:', e);
-            }
-        }
-
-        // Create a new presentation document
-        const newPresentation = new Presentation({
-            title,
-            description,
-            domain,
-            user: userId,
-            // Save the web path that contains the slides (for static serving)
-            folderPath: (function computeWebPath() {
-                // Build POSIX path under /uploads for URLs
-                let webPath = path.posix.join('uploads', presentationId);
-                if (manifestSubdirInZip) {
-                    webPath = path.posix.join(webPath, manifestSubdirInZip);
+                if (subdirs.length === 1 && entries.filter(e => !e.isDirectory()).length === 0) {
+                    // Single subdirectory
+                    baseDirFs = path.join(presentationDirFs, subdirs[0].name);
+                    manifestSubdirInZip = subdirs[0].name;
                 }
-                return webPath;
-            })(),
-            slides,
-            thumbnailPath: thumbnailPathWeb || undefined,
-        });
 
-        await newPresentation.save();
+                const files = await fsPromises.readdir(baseDirFs);
+                slides = files.filter(f => f.toLowerCase().endsWith('.html')).sort();
+            }
 
-        res.status(201).json({
-            message: 'Presentation uploaded successfully',
-            presentation: newPresentation,
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Server error' });
-    }
+            console.log(`Found ${slides.length} slides.`);
+
+            // Move optional thumbnail into presentation root and compute web path
+            let thumbnailPathWeb = '';
+            if (thumbFile) {
+                try {
+                    const ext = path.extname(thumbFile.originalname) || path.extname(thumbFile.filename) || '.png';
+                    const destThumbFs = path.join(presentationDirFs, `thumbnail${ext}`);
+                    await fsPromises.rename(thumbFile.path, destThumbFs);
+                    const posixThumb = path.posix.join('/uploads', presentationId, `thumbnail${ext}`);
+                    thumbnailPathWeb = posixThumb;
+                } catch (e) {
+                    console.error('Failed to move thumbnail:', e);
+                }
+            }
+
+            // Create a new presentation document
+            const newPresentation = new Presentation({
+                title,
+                description,
+                domain,
+                user: userId,
+                // Save the web path that contains the slides (for static serving)
+                folderPath: (function computeWebPath() {
+                    // Build POSIX path under /uploads for URLs
+                    let webPath = path.posix.join('uploads', presentationId);
+                    if (manifestSubdirInZip && manifestSubdirInZip !== '.') {
+                        webPath = path.posix.join(webPath, manifestSubdirInZip);
+                    }
+                    return webPath;
+                })(),
+                slides,
+                thumbnailPath: thumbnailPathWeb || undefined,
+            });
+
+            await newPresentation.save();
+            console.log('Presentation saved to DB:', newPresentation._id);
+
+            res.status(201).json({
+                message: 'Presentation uploaded successfully',
+                presentation: newPresentation,
+            });
+        } catch (err) {
+            console.error('Upload Processing Error:', err);
+            res.status(500).json({ message: `Server error: ${err.message}` });
+        }
+    });
 });
 
 // @route   POST /api/presentations/create
