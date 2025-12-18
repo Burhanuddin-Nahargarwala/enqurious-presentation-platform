@@ -107,7 +107,15 @@ function UploadPage() {
         }, 2000);
       } else {
         // Create from scratch
-        const response = await presentationApi.createPresentation(formData, token);
+        const data = new FormData();
+        data.append('title', formData.title);
+        data.append('description', formData.description);
+        data.append('domain', formData.domain);
+        if (thumbnail) {
+          data.append('thumbnail', thumbnail);
+        }
+
+        const response = await presentationApi.createPresentation(data, token);
         setSuccess(true);
         setTimeout(() => {
           navigate(`/manage/${response.data.presentation._id}`);
@@ -266,27 +274,25 @@ function UploadPage() {
               </div>
             )}
 
-            {activeTab === 'upload' && (
-              <div>
-                <label className="block text-sm font-medium text-secondary-700 mb-1">
-                  Thumbnail (optional)
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setThumbnail(e.target.files[0])}
-                    className="block w-full text-sm text-secondary-500
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-lg file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-secondary-100 file:text-secondary-700
-                      hover:file:bg-secondary-200
-                      cursor-pointer"
-                  />
-                </div>
+            <div>
+              <label className="block text-sm font-medium text-secondary-700 mb-1">
+                Thumbnail (optional)
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setThumbnail(e.target.files[0])}
+                  className="block w-full text-sm text-secondary-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-lg file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-secondary-100 file:text-secondary-700
+                    hover:file:bg-secondary-200
+                    cursor-pointer"
+                />
               </div>
-            )}
+            </div>
 
             {error && (
               <div className="flex items-center gap-2 text-red-600 bg-red-50 p-3 rounded-lg text-sm">

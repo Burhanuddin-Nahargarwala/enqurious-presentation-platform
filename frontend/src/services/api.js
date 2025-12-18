@@ -1,7 +1,7 @@
 // src/services/api.js
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 // Create axios instance with base URL
 const api = axios.create({
@@ -84,7 +84,10 @@ export const presentationApi = {
   // Create a new presentation (empty)
   createPresentation: (data, token) =>
     api.post('/presentations/create', data, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'multipart/form-data'
+      }
     }),
 
   // Create a new file in a presentation

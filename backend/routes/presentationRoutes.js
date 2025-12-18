@@ -215,10 +215,11 @@ router.post('/upload', authMiddleware, upload.fields([
 // @route   POST /api/presentations/create
 // @desc    Create a new empty presentation
 // @access  Private
-router.post('/create', authMiddleware, async (req, res) => {
+router.post('/create', authMiddleware, upload.single('thumbnail'), async (req, res) => {
     try {
         const { title, description, domain } = req.body;
         const userId = req.user.id;
+        const thumbFile = req.file;
 
         // Create a unique folder for the presentation
         const presentationId = `presentation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -251,6 +252,20 @@ router.post('/create', authMiddleware, async (req, res) => {
 
         await fsPromises.writeFile(path.join(presentationDirFs, 'index.html'), defaultHtml);
 
+        // Handle thumbnail if uploaded
+        let thumbnailPathWeb = '';
+        if (thumbFile) {
+            try {
+                const ext = path.extname(thumbFile.originalname) || path.extname(thumbFile.filename) || '.png';
+                const destThumbFs = path.join(presentationDirFs, `thumbnail${ext}`);
+                await fsPromises.rename(thumbFile.path, destThumbFs);
+                const posixThumb = path.posix.join('/uploads', presentationId, `thumbnail${ext}`);
+                thumbnailPathWeb = posixThumb;
+            } catch (e) {
+                console.error('Failed to move thumbnail:', e);
+            }
+        }
+
         // Create a new presentation document
         const newPresentation = new Presentation({
             title,
@@ -259,6 +274,7 @@ router.post('/create', authMiddleware, async (req, res) => {
             user: userId,
             folderPath: path.posix.join('uploads', presentationId),
             slides: ['index.html'],
+            thumbnailPath: thumbnailPathWeb || undefined,
         });
 
         await newPresentation.save();

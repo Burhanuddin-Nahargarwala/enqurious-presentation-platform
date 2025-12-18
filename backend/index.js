@@ -13,6 +13,14 @@ const cors = require('cors'); // Import cors
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 // Connect to MongoDB
+
+// const User = require('./models/User');
+// const Presentation = require('./models/Presentation');
+
+// Load environment variables
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+
+// Connect to MongoDB
 connectDB();
 
 // Initialize Express app
@@ -20,7 +28,7 @@ const app = express();
 
 // CORS Configuration
 const corsOptions = {
-  origin: 'http://localhost:5173', // Allow only your frontend origin
+  origin: process.env.CORS_ORIGIN || 'http://localhost:5173', // Allow only your frontend origin
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true // Allow cookies to be sent
@@ -53,7 +61,7 @@ app.use('/api/presentations', require('./routes/presentationRoutes'));
 
 // Test route
 app.get('/', (req, res) => {
-    res.json({ message: 'API is running...' });
+  res.json({ message: 'API is running...' });
 });
 
 // // Test route (remove after testing)
