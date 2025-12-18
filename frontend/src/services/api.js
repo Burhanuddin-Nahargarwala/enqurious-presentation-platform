@@ -25,16 +25,16 @@ export const userApi = {
 
 // Presentation functions
 export const presentationApi = {
-  // Get all presentations for a user
+  // Get all presentations (public)
   getPresentations: (token) =>
     api.get('/presentations', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
     }),
 
-  // Get a single presentation
+  // Get a single presentation (public)
   getPresentation: (id, token) =>
     api.get(`/presentations/${id}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
     }),
 
   // Upload a presentation
@@ -58,9 +58,27 @@ export const presentationApi = {
       headers: { Authorization: `Bearer ${token}` }
     }),
 
-  // Fetch unique filters (domains and authors)
+  // Fetch unique filters (public)
   getFilters: (token) =>
     api.get('/presentations/filters', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    }),
+
+  // Get all files in a presentation (public)
+  getFiles: (id, token) =>
+    api.get(`/presentations/${id}/files`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    }),
+
+  // Get content of a specific file (public)
+  getFileContent: (id, filename, token) =>
+    api.get(`/presentations/${id}/files/${filename}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    }),
+
+  // Update content of a specific file
+  updateFileContent: (id, filename, content, token) =>
+    api.put(`/presentations/${id}/files/${filename}`, { content }, {
       headers: { Authorization: `Bearer ${token}` }
     }),
 };

@@ -5,7 +5,7 @@ import { LayoutDashboard, Upload, LogOut, User } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { cn } from './Button';
 
-import logo from '../../assets/enqurious-logo.png';
+import logo from '../../assets/enqurious-dashboard-logo.png';
 
 export const Layout = ({ children }) => {
     const { user, logout } = useAuth();
@@ -19,7 +19,7 @@ export const Layout = ({ children }) => {
 
     const navItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-        { icon: Upload, label: 'Upload', path: '/upload' },
+        ...(user ? [{ icon: Upload, label: 'Upload', path: '/upload' }] : []),
     ];
 
     return (
@@ -52,31 +52,48 @@ export const Layout = ({ children }) => {
                 </nav>
 
                 <div className="p-4 border-t border-secondary-200">
-                    <div className="flex items-center gap-3 px-4 py-3 mb-2">
-                        <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold">
-                            {user?.name?.charAt(0) || 'U'}
-                        </div>
-                        <div className="flex-1 overflow-hidden">
-                            <p className="text-sm font-medium text-secondary-900 truncate">{user?.name}</p>
-                            <p className="text-xs text-secondary-500 truncate">{user?.email}</p>
-                        </div>
-                    </div>
-                    <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    >
-                        <LogOut size={18} />
-                        Sign Out
-                    </button>
+                    {user ? (
+                        <>
+                            <div className="flex items-center gap-3 px-4 py-3 mb-2">
+                                <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold">
+                                    {user?.name?.charAt(0) || 'U'}
+                                </div>
+                                <div className="flex-1 overflow-hidden">
+                                    <p className="text-sm font-medium text-secondary-900 truncate">{user?.name}</p>
+                                    <p className="text-xs text-secondary-500 truncate">{user?.email}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleLogout}
+                                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            >
+                                <LogOut size={18} />
+                                Sign Out
+                            </button>
+                        </>
+                    ) : (
+                        <Link to="/login">
+                            <button className="w-full flex items-center gap-3 px-4 py-2 text-sm text-primary-600 hover:bg-primary-50 rounded-lg transition-colors font-medium">
+                                <User size={18} />
+                                Login
+                            </button>
+                        </Link>
+                    )}
                 </div>
             </aside>
 
             {/* Mobile Header */}
             <div className="md:hidden fixed top-0 left-0 right-0 bg-white border-b border-secondary-200 z-20 px-4 py-3 flex items-center justify-between">
                 <img src={logo} alt="Enqurious" className="h-8 object-contain" />
-                <button onClick={handleLogout} className="text-secondary-600">
-                    <LogOut size={20} />
-                </button>
+                {user ? (
+                    <button onClick={handleLogout} className="text-secondary-600">
+                        <LogOut size={20} />
+                    </button>
+                ) : (
+                    <Link to="/login" className="text-primary-600 font-medium text-sm">
+                        Login
+                    </Link>
+                )}
             </div>
 
             {/* Main Content */}

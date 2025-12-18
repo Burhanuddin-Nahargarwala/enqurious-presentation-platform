@@ -216,7 +216,7 @@ router.post('/upload', authMiddleware, upload.fields([
 // @route   GET /api/presentations
 // @desc    Get all presentations
 // @access  Private
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const presentations = await Presentation.find({})
             .populate('user', 'name email') // Populate user details
@@ -231,7 +231,7 @@ router.get('/', authMiddleware, async (req, res) => {
 // @route   GET /api/presentations/filters
 // @desc    Get unique domains and authors that have presentations
 // @access  Private
-router.get('/filters', authMiddleware, async (req, res) => {
+router.get('/filters', async (req, res) => {
     try {
         // Unique domains directly from Presentation collection
         const domains = await Presentation.distinct('domain');
@@ -265,9 +265,13 @@ router.get('/filters', authMiddleware, async (req, res) => {
 // @route   GET /api/presentations/:id
 // @desc    Get a single presentation by ID (visible to any authenticated user)
 // @access  Private
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', async (req, res) => {
     try {
-        const presentation = await Presentation.findById(req.params.id);
+        const presentation = await Presentation.findByIdAndUpdate(
+            req.params.id,
+            { $inc: { views: 1 } },
+            { new: true }
+        ).populate('user', 'name email');
 
         if (!presentation) {
             return res.status(404).json({ message: 'Presentation not found' });
@@ -331,6 +335,134 @@ router.delete('/:id', authMiddleware, async (req, res) => {
         await Presentation.deleteOne({ _id: req.params.id });
 
         res.json({ message: 'Presentation deleted successfully' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// @route   GET /api/presentations/:id/files
+// @desc    List all files in a presentation
+// @access  Private
+router.get('/:id/files', async (req, res) => {
+    try {
+        const presentation = await Presentation.findById(req.params.id);
+
+        if (!presentation) {
+            return res.status(404).json({ message: 'Presentation not found' });
+        }
+
+        // Public access: allow anyone to list files
+        // if (presentation.user.toString() !== req.user.id) {
+        //     return res.status(401).json({ message: 'User not authorized' });
+        // }
+
+        const folderPath = path.join(__dirname, '..', presentation.folderPath);
+
+        // Recursive function to get all files
+        async function getFiles(dir) {
+            const dirents = await fsPromises.readdir(dir, { withFileTypes: true });
+            const files = await Promise.all(dirents.map((dirent) => {
+                const res = path.resolve(dir, dirent.name);
+                if (dirent.isDirectory()) {
+                    return getFiles(res);
+                } else {
+                    return path.relative(folderPath, res);
+                }
+            }));
+            return Array.prototype.concat(...files);
+        }
+
+        const files = await getFiles(folderPath);
+        res.json(files);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// @route   GET /api/presentations/:id/files/:filename
+// @desc    Get content of a specific file
+// @access  Private
+// Using Regex to match /:id/files/:filename+ because of path-to-regexp v8 strictness
+router.get(/^\/([^\/]+)\/files\/(.+)$/, async (req, res) => {
+    try {
+        const presentationId = req.params[0];
+        const filenameParam = req.params[1];
+
+        // Normalize filename (remove leading slashes)
+        const filename = filenameParam.replace(/^\/+/, '');
+
+        const presentation = await Presentation.findById(presentationId);
+
+        if (!presentation) {
+            return res.status(404).json({ message: 'Presentation not found' });
+        }
+
+        // Public access: allow anyone to read files
+        // if (presentation.user.toString() !== req.user.id) {
+        //     return res.status(401).json({ message: 'User not authorized' });
+        // }
+
+        const folderPath = path.join(__dirname, '..', presentation.folderPath);
+        const filePath = path.join(folderPath, filename);
+
+        // Security check: ensure file is within presentation folder
+        if (!filePath.startsWith(folderPath)) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
+        // Check if file exists
+        try {
+            await fsPromises.access(filePath);
+        } catch (e) {
+            return res.status(404).json({ message: 'File not found' });
+        }
+
+        const content = await fsPromises.readFile(filePath, 'utf8');
+        res.json({ content });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// @route   PUT /api/presentations/:id/files/:filename
+// @desc    Update content of a specific file
+// @access  Private
+router.put(/^\/([^\/]+)\/files\/(.+)$/, authMiddleware, async (req, res) => {
+    try {
+        const presentationId = req.params[0];
+        const filenameParam = req.params[1];
+
+        // Normalize filename
+        const filename = filenameParam.replace(/^\/+/, '');
+
+        const presentation = await Presentation.findById(presentationId);
+
+        if (!presentation) {
+            return res.status(404).json({ message: 'Presentation not found' });
+        }
+
+        if (presentation.user.toString() !== req.user.id) {
+            return res.status(401).json({ message: 'User not authorized' });
+        }
+
+        const { content } = req.body;
+        if (content === undefined) {
+            return res.status(400).json({ message: 'Content is required' });
+        }
+
+        const folderPath = path.join(__dirname, '..', presentation.folderPath);
+        const filePath = path.join(folderPath, filename);
+
+        // Security check
+        if (!filePath.startsWith(folderPath)) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
+        await fsPromises.writeFile(filePath, content, 'utf8');
+        res.json({ message: 'File updated successfully' });
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Server error' });

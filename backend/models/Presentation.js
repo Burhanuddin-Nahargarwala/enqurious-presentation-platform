@@ -32,7 +32,7 @@ const PresentationSchema = new mongoose.Schema({
     type: [String],
     required: [true, 'Please add at least one slide'],
     validate: {
-      validator: function(slides) {
+      validator: function (slides) {
         return slides.length > 0;
       },
       message: 'A presentation must have at least one slide'
@@ -45,6 +45,10 @@ const PresentationSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
+  },
+  views: {
+    type: Number,
+    default: 0
   }
 });
 

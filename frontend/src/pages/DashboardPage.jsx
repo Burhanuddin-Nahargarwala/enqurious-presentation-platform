@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { EditPresentationModal } from '../components/EditPresentationModal';
 import { Tooltip } from '../components/ui/Tooltip';
-import { Search, Filter, Eye, Trash2, Plus, Layout as LayoutIcon, Pencil } from 'lucide-react';
+import { Search, Filter, Eye, Trash2, Plus, Layout as LayoutIcon, Pencil, Settings } from 'lucide-react';
 import { presentationApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Layout } from '../components/ui/Layout';
@@ -115,14 +115,24 @@ function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-secondary-900">Dashboard</h1>
-            <p className="text-secondary-500 mt-1">Manage and view your presentations</p>
+            <p className="text-secondary-500 mt-1">
+              {user ? 'Manage and view your presentations' : 'Explore public presentations'}
+            </p>
           </div>
-          <Link to="/upload">
-            <Button>
-              <Plus className="mr-2" size={20} />
-              New Presentation
-            </Button>
-          </Link>
+          {user ? (
+            <Link to="/upload">
+              <Button>
+                <Plus className="mr-2" size={20} />
+                New Presentation
+              </Button>
+            </Link>
+          ) : (
+            <Link to="/login">
+              <Button>
+                Login to Upload
+              </Button>
+            </Link>
+          )}
         </div>
 
         <Card className="p-4">
@@ -237,6 +247,10 @@ function DashboardPage() {
                         {presentation.user.name.charAt(0)}
                       </div>
                       <span>{presentation.user.name}</span>
+                      <div className="flex items-center gap-1 ml-auto">
+                        <Eye size={14} />
+                        <span>{presentation.views || 0}</span>
+                      </div>
                     </div>
                   </CardContent>
 
@@ -249,6 +263,16 @@ function DashboardPage() {
                     </Link>
                     {user && user.id === presentation.user._id && (
                       <>
+                        <Link to={`/manage/${presentation._id}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-secondary-600 hover:text-primary-600 hover:bg-primary-50"
+                            title="Manage Files"
+                          >
+                            <Settings size={16} />
+                          </Button>
+                        </Link>
                         <Button
                           variant="ghost"
                           size="sm"

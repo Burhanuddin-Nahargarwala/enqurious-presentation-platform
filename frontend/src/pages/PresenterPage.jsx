@@ -10,7 +10,9 @@ import {
   X,
   Monitor,
   Smartphone,
-  Layout as LayoutIcon
+  Layout as LayoutIcon,
+  Eye,
+  Share2
 } from 'lucide-react';
 import { presentationApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -262,6 +264,17 @@ function PresenterPage() {
               </button>
               <div className="w-px h-4 bg-white/20" />
               <button
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                  alert('Link copied to clipboard!');
+                }}
+                className="p-2 rounded-full hover:bg-white/10 text-white transition-colors"
+                title="Share Presentation"
+              >
+                <Share2 size={18} />
+              </button>
+              <div className="w-px h-4 bg-white/20" />
+              <button
                 onClick={toggleFullscreen}
                 className="p-2 rounded-full hover:bg-white/10 text-white transition-colors"
                 title="Toggle Fullscreen"
@@ -339,6 +352,8 @@ function PresenterPage() {
                   <span>Slide {currentSlideIndex + 1} / {presentation.slides.length}</span>
                   <span className="w-1 h-1 rounded-full bg-gray-500" />
                   <span>{presentation.user.name}</span>
+                  <span className="w-1 h-1 rounded-full bg-gray-500" />
+                  <span className="flex items-center gap-1"><Eye size={14} /> {presentation.views || 0}</span>
                 </div>
               </div>
 

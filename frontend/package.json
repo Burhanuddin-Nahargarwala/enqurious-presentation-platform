@@ -14,9 +14,11 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.26",
     "lucide-react": "^0.561.0",
+    "prismjs": "^1.30.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.9.5",
+    "react-simple-code-editor": "^0.14.1",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
