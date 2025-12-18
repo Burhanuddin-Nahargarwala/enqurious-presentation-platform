@@ -81,6 +81,23 @@ export const presentationApi = {
     api.put(`/presentations/${id}/files/${filename}`, { content }, {
       headers: { Authorization: `Bearer ${token}` }
     }),
+  // Create a new presentation (empty)
+  createPresentation: (data, token) =>
+    api.post('/presentations/create', data, {
+      headers: { Authorization: `Bearer ${token}` }
+    }),
+
+  // Create a new file in a presentation
+  createFile: (id, filename, content, token) =>
+    api.post(`/presentations/${id}/files`, { filename, content }, {
+      headers: { Authorization: `Bearer ${token}` }
+    }),
+
+  // Delete a specific file
+  deleteFile: (id, filename, token) =>
+    api.delete(`/presentations/${id}/files/${filename}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }),
 };
 
 export default api;

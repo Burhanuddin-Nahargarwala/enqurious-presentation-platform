@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FileCode, Save, ArrowLeft, RefreshCw, Check, AlertCircle } from 'lucide-react';
+import { FileCode, Save, ArrowLeft, RefreshCw, Check, AlertCircle, Plus, Trash2, X } from 'lucide-react';
 import { presentationApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Layout } from '../components/ui/Layout';
 import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
 import SlideEditor from '../components/SlideEditor';
 
 function ManagePresentationPage() {
@@ -21,6 +22,11 @@ function ManagePresentationPage() {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+
+    // New file state
+    const [isCreating, setIsCreating] = useState(false);
+    const [newFilename, setNewFilename] = useState('');
+    const [creatingFile, setCreatingFile] = useState(false);
 
     useEffect(() => {
         fetchFiles();
@@ -41,6 +47,8 @@ function ManagePresentationPage() {
     };
 
     const handleFileSelect = async (filename) => {
+        if (selectedFile === filename) return;
+
         setSelectedFile(filename);
         setLoadingContent(true);
         setError('');
@@ -74,6 +82,50 @@ function ManagePresentationPage() {
         }
     };
 
+    const handleCreateFile = async () => {
+        if (!newFilename) return;
+
+        // Auto-append .html if missing
+        let filename = newFilename;
+        if (!filename.includes('.')) {
+            filename += '.html';
+        }
+
+        setCreatingFile(true);
+        setError('');
+        try {
+            await presentationApi.createFile(id, filename, '<!DOCTYPE html>\n<html>\n<body>\n  <h1>New Slide</h1>\n</body>\n</html>', token);
+            await fetchFiles();
+            setIsCreating(false);
+            setNewFilename('');
+            handleFileSelect(filename);
+            setSuccess('File created successfully');
+            setTimeout(() => setSuccess(''), 3000);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Failed to create file');
+        } finally {
+            setCreatingFile(false);
+        }
+    };
+
+    const handleDeleteFile = async (e, filename) => {
+        e.stopPropagation(); // Prevent selection when clicking delete
+        if (!window.confirm(`Are you sure you want to delete ${filename}?`)) return;
+
+        try {
+            await presentationApi.deleteFile(id, filename, token);
+            if (selectedFile === filename) {
+                setSelectedFile(null);
+                setFileContent('');
+            }
+            await fetchFiles();
+            setSuccess('File deleted successfully');
+            setTimeout(() => setSuccess(''), 3000);
+        } catch (err) {
+            setError('Failed to delete file');
+        }
+    };
+
     return (
         <Layout>
             <div className="h-[calc(100vh-100px)] flex flex-col">
@@ -96,9 +148,46 @@ function ManagePresentationPage() {
                 <div className="flex-1 flex gap-6 overflow-hidden">
                     {/* File List Sidebar */}
                     <div className="w-1/4 bg-white rounded-xl border border-secondary-200 overflow-y-auto flex flex-col">
-                        <div className="p-4 border-b border-secondary-100 bg-secondary-50">
+                        <div className="p-4 border-b border-secondary-100 bg-secondary-50 flex justify-between items-center">
                             <h3 className="font-semibold text-secondary-900">Files</h3>
+                            <button
+                                onClick={() => setIsCreating(true)}
+                                className="p-1 hover:bg-secondary-200 rounded text-primary-600"
+                                title="New Slide"
+                            >
+                                <Plus size={20} />
+                            </button>
                         </div>
+
+                        {isCreating && (
+                            <div className="p-3 bg-primary-50 border-b border-primary-100">
+                                <div className="flex gap-2 mb-2">
+                                    <Input
+                                        value={newFilename}
+                                        onChange={(e) => setNewFilename(e.target.value)}
+                                        placeholder="slide.html"
+                                        className="h-8 text-sm"
+                                        autoFocus
+                                    />
+                                </div>
+                                <div className="flex gap-2 justify-end">
+                                    <button
+                                        onClick={() => setIsCreating(false)}
+                                        className="p-1 text-secondary-500 hover:text-secondary-700"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                    <button
+                                        onClick={handleCreateFile}
+                                        disabled={creatingFile || !newFilename}
+                                        className="p-1 text-primary-600 hover:text-primary-700 disabled:opacity-50"
+                                    >
+                                        <Check size={16} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex-1 p-2 space-y-1">
                             {loading ? (
                                 <div className="flex justify-center p-4">
@@ -108,17 +197,26 @@ function ManagePresentationPage() {
                                 <p className="text-center text-secondary-500 p-4 text-sm">No files found</p>
                             ) : (
                                 files.map((file) => (
-                                    <button
+                                    <div
                                         key={file}
-                                        onClick={() => handleFileSelect(file)}
-                                        className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors ${selectedFile === file
-                                                ? 'bg-primary-50 text-primary-700 font-medium'
-                                                : 'text-secondary-600 hover:bg-secondary-50'
+                                        className={`group w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between transition-colors cursor-pointer ${selectedFile === file
+                                            ? 'bg-primary-50 text-primary-700 font-medium'
+                                            : 'text-secondary-600 hover:bg-secondary-50'
                                             }`}
+                                        onClick={() => handleFileSelect(file)}
                                     >
-                                        <FileCode size={16} />
-                                        <span className="truncate" title={file}>{file}</span>
-                                    </button>
+                                        <div className="flex items-center gap-2 truncate">
+                                            <FileCode size={16} />
+                                            <span className="truncate" title={file}>{file}</span>
+                                        </div>
+                                        <button
+                                            onClick={(e) => handleDeleteFile(e, file)}
+                                            className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
+                                            title="Delete File"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
                                 ))
                             )}
                         </div>
@@ -130,16 +228,18 @@ function ManagePresentationPage() {
                             <>
                                 <div className="p-4 border-b border-secondary-100 flex justify-between items-center bg-secondary-50">
                                     <span className="font-mono text-sm text-secondary-700">{selectedFile}</span>
-                                    {success && (
-                                        <span className="text-green-600 text-sm flex items-center gap-1">
-                                            <Check size={14} /> {success}
-                                        </span>
-                                    )}
-                                    {error && (
-                                        <span className="text-red-600 text-sm flex items-center gap-1">
-                                            <AlertCircle size={14} /> {error}
-                                        </span>
-                                    )}
+                                    <div className="flex items-center gap-4">
+                                        {success && (
+                                            <span className="text-green-600 text-sm flex items-center gap-1">
+                                                <Check size={14} /> {success}
+                                            </span>
+                                        )}
+                                        {error && (
+                                            <span className="text-red-600 text-sm flex items-center gap-1">
+                                                <AlertCircle size={14} /> {error}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="flex-1 overflow-y-auto p-4">
                                     {loadingContent ? (
@@ -157,7 +257,7 @@ function ManagePresentationPage() {
                         ) : (
                             <div className="flex-1 flex flex-col items-center justify-center text-secondary-400">
                                 <FileCode size={48} className="mb-4 opacity-50" />
-                                <p>Select a file to edit</p>
+                                <p>Select a file to edit or create a new one</p>
                             </div>
                         )}
                     </div>
