@@ -406,7 +406,14 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
         // Delete the presentation folder from the file system
         const folderPath = path.join(__dirname, '..', presentation.folderPath);
-        await fsPromises.rmdir(folderPath, { recursive: true });
+
+        // Use rm with recursive: true (Node 14+) for robust deletion
+        try {
+            await fsPromises.rm(folderPath, { recursive: true, force: true });
+        } catch (e) {
+            console.error('Error deleting folder:', e);
+            // Continue to delete from DB even if folder deletion fails (or doesn't exist)
+        }
 
         // Delete the presentation from the database
         await Presentation.deleteOne({ _id: req.params.id });
@@ -467,8 +474,8 @@ router.get(/^\/([^\/]+)\/files\/(.+)$/, async (req, res) => {
         const presentationId = req.params[0];
         const filenameParam = req.params[1];
 
-        // Normalize filename (remove leading slashes)
-        const filename = filenameParam.replace(/^\/+/, '');
+        // Normalize filename (remove leading slashes) and decode
+        const filename = decodeURIComponent(filenameParam.replace(/^\/+/, ''));
 
         const presentation = await Presentation.findById(presentationId);
 
@@ -512,8 +519,8 @@ router.put(/^\/([^\/]+)\/files\/(.+)$/, authMiddleware, async (req, res) => {
         const presentationId = req.params[0];
         const filenameParam = req.params[1];
 
-        // Normalize filename
-        const filename = filenameParam.replace(/^\/+/, '');
+        // Normalize filename and decode
+        const filename = decodeURIComponent(filenameParam.replace(/^\/+/, ''));
 
         const presentation = await Presentation.findById(presentationId);
 
@@ -605,7 +612,8 @@ router.delete(/^\/([^\/]+)\/files\/(.+)$/, authMiddleware, async (req, res) => {
     try {
         const presentationId = req.params[0];
         const filenameParam = req.params[1];
-        const filename = filenameParam.replace(/^\/+/, '');
+        // Normalize filename and decode
+        const filename = decodeURIComponent(filenameParam.replace(/^\/+/, ''));
 
         const presentation = await Presentation.findById(presentationId);
 
@@ -624,7 +632,11 @@ router.delete(/^\/([^\/]+)\/files\/(.+)$/, authMiddleware, async (req, res) => {
             return res.status(403).json({ message: 'Access denied' });
         }
 
-        await fsPromises.unlink(filePath);
+        try {
+            await fsPromises.unlink(filePath);
+        } catch (e) {
+            console.warn('File not found on disk, but removing from DB:', filename);
+        }
 
         // Remove from slides list if it's there
         if (presentation.slides.includes(filename)) {
