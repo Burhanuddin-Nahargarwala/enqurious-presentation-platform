@@ -28,7 +28,20 @@ const app = express();
 
 // CORS Configuration
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173', // Allow only your frontend origin
+  origin: (origin, callback) => {
+    const allowed = process.env.CORS_ORIGIN || 'http://localhost:5173';
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // Normalize origins by removing trailing slash
+    const normalize = (url) => url.replace(/\/$/, '');
+    if (normalize(origin) === normalize(allowed)) {
+      callback(null, true);
+    } else {
+      console.log('Blocked by CORS:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true // Allow cookies to be sent
@@ -96,6 +109,15 @@ app.get('/', (req, res) => {
 //         res.status(400).json({ error: error.message });
 //     }
 // });
+
+// Global Error Handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled Error:', err);
+  res.status(500).json({
+    message: 'Internal Server Error',
+    error: process.env.NODE_ENV === 'production' ? 'An unexpected error occurred' : err.message
+  });
+});
 
 // Start server
 const PORT = process.env.PORT || 5000;
