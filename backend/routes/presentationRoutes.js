@@ -344,6 +344,12 @@ router.get('/filters', async (req, res) => {
 // @access  Private
 router.get('/:id', async (req, res) => {
     try {
+        // Validate ObjectId to prevent CastError if a non-ID (like "upload") is passed
+        const mongoose = require('mongoose');
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ message: 'Presentation not found' });
+        }
+
         const presentation = await Presentation.findByIdAndUpdate(
             req.params.id,
             { $inc: { views: 1 } },
