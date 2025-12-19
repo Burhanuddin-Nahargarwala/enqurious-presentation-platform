@@ -57,7 +57,51 @@ try {
 }
 
 // Make uploads directory static
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+// Make uploads directory static (Legacy/Fallback)
+// app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+
+// S3 Proxy Route for serving files
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const mime = require('mime-types');
+
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+  }
+});
+
+app.get(/^\/uploads\/(.+)/, async (req, res) => {
+  try {
+    const key = req.params[0];
+
+    const command = new GetObjectCommand({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: `uploads/${key}`
+    });
+
+    const response = await s3Client.send(command);
+
+    // Set Content-Type
+    if (response.ContentType) {
+      res.setHeader('Content-Type', response.ContentType);
+    } else {
+      const contentType = mime.lookup(key) || 'application/octet-stream';
+      res.setHeader('Content-Type', contentType);
+    }
+
+    // Pipe S3 stream to response
+    response.Body.pipe(res);
+  } catch (err) {
+    if (err.name === 'NoSuchKey') {
+      console.error(`File not found in S3: uploads/${req.params[0]}`);
+      return res.status(404).send('File not found');
+    }
+    console.error('S3 Proxy Error:', err);
+    res.status(500).send('Error fetching file');
+  }
+});
 
 // Routes
 app.use('/api/users', require('./routes/userRoutes'));
@@ -67,39 +111,6 @@ app.use('/api/presentations', require('./routes/presentationRoutes'));
 app.get('/', (req, res) => {
   res.json({ message: 'API is running...' });
 });
-
-// // Test route (remove after testing)
-// app.get('/test-models', async (req, res) => {
-//     try {
-//         // Create a test user
-//         const user = new User({
-//             name: 'Test User',
-//             email: 'test@example.com',
-//             password: 'password123'
-//         });
-//
-//         // Create a test presentation
-//         const presentation = new Presentation({
-//             title: 'Test Presentation',
-//             description: 'A test presentation',
-//             user: user._id,
-//             folderPath: '/uploads/test123',
-//             slides: ['slide1.html', 'slide2.html']
-//         });
-//
-//         // Save to database
-//         await user.save();
-//         await presentation.save();
-//
-//         res.json({
-//             message: 'Models created successfully',
-//             user,
-//             presentation
-//         });
-//     } catch (error) {
-//         res.status(400).json({ error: error.message });
-//     }
-// });
 
 // Global Error Handler
 app.use((err, req, res, next) => {

@@ -1,44 +1,90 @@
 // backend/routes/presentationRoutes.js
+// backend/routes/presentationRoutes.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const unzipper = require('unzipper');
-const fs = require('fs');  // Regular fs module
-const fsPromises = require('fs').promises;  // Promise-based fs module
+const fs = require('fs');
 const path = require('path');
 const authMiddleware = require('../middleware/authMiddleware');
 const Presentation = require('../models/Presentation');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
+const mime = require('mime-types');
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        // Ensure we target backend/uploads/temp (one level up from routes)
-        const tempDir = path.join(__dirname, '..', 'uploads', 'temp');
-        try {
-            if (!fs.existsSync(tempDir)) {
-                fs.mkdirSync(tempDir, { recursive: true });
-            }
-            cb(null, tempDir);
-        } catch (e) {
-            cb(e, tempDir);
-        }
-    },
-    filename: function (req, file, cb) {
-        cb(null, `${Date.now()}-${file.originalname}`);
+// Initialize S3 Client
+const s3Client = new S3Client({
+    region: process.env.AWS_REGION,
+    credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
     }
 });
+
+const BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+
+// Helper: Upload to S3
+const uploadToS3 = async (key, body, contentType) => {
+    const command = new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+        Body: body,
+        ContentType: contentType
+    });
+    return s3Client.send(command);
+};
+
+// Helper: Delete from S3 (single object)
+const deleteObjectFromS3 = async (key) => {
+    const command = new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key
+    });
+    return s3Client.send(command);
+};
+
+// Helper: Delete folder (prefix) from S3
+const deleteFolderFromS3 = async (prefix) => {
+    let continuationToken = undefined;
+    do {
+        const listCommand = new ListObjectsV2Command({
+            Bucket: BUCKET_NAME,
+            Prefix: prefix,
+            ContinuationToken: continuationToken
+        });
+        const listResult = await s3Client.send(listCommand);
+
+        if (listResult.Contents && listResult.Contents.length > 0) {
+            // Delete objects in batches (using Promise.all for simplicity, or DeleteObjectsCommand for efficiency)
+            await Promise.all(listResult.Contents.map(obj => deleteObjectFromS3(obj.Key)));
+        }
+        continuationToken = listResult.NextContinuationToken;
+    } while (continuationToken);
+};
+
+// Helper: Get object content from S3
+const getObjectContentFromS3 = async (key) => {
+    const command = new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key
+    });
+    const response = await s3Client.send(command);
+    // Convert stream to string
+    return response.Body.transformToString();
+};
+
+// Configure multer for memory storage (we don't want to save to disk anymore)
+const storage = multer.memoryStorage();
 
 const upload = multer({
     storage: storage,
     fileFilter: function (req, file, cb) {
         console.log('Uploading file:', file.originalname, 'Mimetype:', file.mimetype);
-        // Relaxed MIME type check
         if (
             file.mimetype === 'application/zip' ||
             file.mimetype === 'application/x-zip-compressed' ||
             file.mimetype === 'application/x-zip' ||
-            file.mimetype === 'application/octet-stream' || // Common on Windows
-            file.originalname.toLowerCase().endsWith('.zip') || // Fallback to extension
+            file.mimetype === 'application/octet-stream' ||
+            file.originalname.toLowerCase().endsWith('.zip') ||
             (file.mimetype && file.mimetype.startsWith('image/'))
         ) {
             cb(null, true);
@@ -48,7 +94,7 @@ const upload = multer({
         }
     },
     limits: {
-        fileSize: 50 * 1024 * 1024, // Increased to 50MB
+        fileSize: 50 * 1024 * 1024, // 50MB limit
     }
 });
 
@@ -65,7 +111,7 @@ router.post('/upload', authMiddleware, (req, res) => {
         if (err) {
             console.error('Multer Error:', err);
             if (err instanceof multer.MulterError) {
-                return res.status(400).json({ message: `Upload error: ${err.message}` });
+                return res.status(400).json({ message: `Upload error: ${err.message} ` });
             }
             return res.status(400).json({ message: err.message });
         }
@@ -80,108 +126,76 @@ router.post('/upload', authMiddleware, (req, res) => {
             const { title, description, domain } = req.body;
             const userId = req.user.id;
 
-            // Create a unique folder for the presentation
+            // Create a unique ID for the presentation
             const presentationId = `presentation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const uploadsRootFs = path.join(__dirname, '..', 'uploads');
-            const presentationDirFs = path.join(uploadsRootFs, presentationId);
+            const s3Prefix = `uploads/${presentationId}`; // S3 "folder"
 
-            console.log(`Creating presentation directory: ${presentationDirFs}`);
-            await fsPromises.mkdir(presentationDirFs, { recursive: true });
-
-            // Extract the zip file
-            const zipPath = presFiles[0].path;
+            // Extract the zip file from memory buffer
+            const zipBuffer = presFiles[0].buffer;
             const thumbFile = req.files && req.files.thumbnail && req.files.thumbnail[0];
 
-            console.log(`Extracting zip from: ${zipPath}`);
+            console.log(`Extracting zip to S3 prefix: ${s3Prefix} `);
 
-            // Use simple extraction
-            await new Promise((resolve, reject) => {
-                fs.createReadStream(zipPath)
-                    .pipe(unzipper.Extract({ path: presentationDirFs }))
-                    .on('close', resolve)
-                    .on('error', reject);
-            });
-            console.log('Extraction complete.');
-
-            // Remove the temporary zip file
-            await fsPromises.unlink(zipPath);
-
-            // Determine the base directory that actually contains slides (filesystem path)
-            let baseDirFs = presentationDirFs;
-            // Check for manifest.json at root
+            const directory = await unzipper.Open.buffer(zipBuffer);
+            const slides = [];
             let manifestSlides = null;
-            let manifestSubdirInZip = '';
+            let manifestSubdir = '';
 
-            // Try to find manifest.json in the extracted files
-            const findManifest = async (dir) => {
-                try {
-                    const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-                    for (const entry of entries) {
-                        if (entry.name === 'manifest.json') {
-                            return dir;
+            // First pass: Look for manifest
+            for (const file of directory.files) {
+                if (file.path === 'manifest.json' || file.path.endsWith('/manifest.json')) {
+                    try {
+                        const content = await file.buffer();
+                        const manifest = JSON.parse(content.toString());
+                        if (Array.isArray(manifest.slides)) {
+                            manifestSlides = manifest.slides;
+                            const dirName = path.dirname(file.path);
+                            manifestSubdir = (dirName && dirName !== '.') ? dirName : '';
                         }
-                        if (entry.isDirectory()) {
-                            // Check one level deep
-                            const subPath = path.join(dir, entry.name);
-                            const subEntries = await fsPromises.readdir(subPath);
-                            if (subEntries.includes('manifest.json')) {
-                                return subPath;
-                            }
-                        }
+                    } catch (e) {
+                        console.warn('Failed to parse manifest:', e);
                     }
-                } catch (e) { }
-                return null;
-            };
-
-            const manifestDir = await findManifest(presentationDirFs);
-            if (manifestDir) {
-                try {
-                    const data = await fsPromises.readFile(path.join(manifestDir, 'manifest.json'), 'utf8');
-                    const manifest = JSON.parse(data);
-                    if (Array.isArray(manifest.slides) && manifest.slides.length > 0) {
-                        manifestSlides = manifest.slides;
-                        baseDirFs = manifestDir;
-                        // Calculate relative path for web serving
-                        manifestSubdirInZip = path.relative(presentationDirFs, manifestDir).replace(/\\/g, '/');
-                    }
-                } catch (e) {
-                    console.warn('Found manifest but failed to read/parse:', e);
                 }
             }
 
-            let slides = manifestSlides;
-            if (!slides) {
-                console.log('No valid manifest found, falling back to scanning for HTML files.');
-                // Fallback: scan for HTML files
-                // If the zip contained a single folder, maybe the slides are in there
-                const entries = await fsPromises.readdir(presentationDirFs, { withFileTypes: true });
-                const subdirs = entries.filter(e => e.isDirectory());
+            // Upload files to S3
+            for (const file of directory.files) {
+                if (file.type === 'Directory') continue;
 
-                if (subdirs.length === 1 && entries.filter(e => !e.isDirectory()).length === 0) {
-                    // Single subdirectory
-                    baseDirFs = path.join(presentationDirFs, subdirs[0].name);
-                    manifestSubdirInZip = subdirs[0].name;
+                // Normalize path
+                const filePath = file.path;
+                const s3Key = `${s3Prefix}/${filePath}`;
+                const contentType = mime.lookup(filePath) || 'application/octet-stream';
+
+                const contentBuffer = await file.buffer();
+                await uploadToS3(s3Key, contentBuffer, contentType);
+
+                // Collect HTML slides if no manifest found
+                if (!manifestSlides && filePath.toLowerCase().endsWith('.html')) {
+                    // If we are in a subdirectory, we might need to adjust logic, but for now simple collection
+                    slides.push(filePath);
                 }
-
-                const files = await fsPromises.readdir(baseDirFs);
-                slides = files.filter(f => f.toLowerCase().endsWith('.html')).sort();
             }
 
-            console.log(`Found ${slides.length} slides.`);
-
-            // Move optional thumbnail into presentation root and compute web path
+            // Handle thumbnail
             let thumbnailPathWeb = '';
             if (thumbFile) {
-                try {
-                    const ext = path.extname(thumbFile.originalname) || path.extname(thumbFile.filename) || '.png';
-                    const destThumbFs = path.join(presentationDirFs, `thumbnail${ext}`);
-                    await fsPromises.rename(thumbFile.path, destThumbFs);
-                    const posixThumb = path.posix.join('/uploads', presentationId, `thumbnail${ext}`);
-                    thumbnailPathWeb = posixThumb;
-                } catch (e) {
-                    console.error('Failed to move thumbnail:', e);
-                }
+                const ext = path.extname(thumbFile.originalname) || '.png';
+                const thumbKey = `${s3Prefix}/thumbnail${ext}`;
+                await uploadToS3(thumbKey, thumbFile.buffer, thumbFile.mimetype);
+                thumbnailPathWeb = thumbKey; // Store S3 Key (or relative path)
             }
+
+            // Determine final slides list
+            let finalSlides = [];
+            if (manifestSlides) {
+                // Adjust manifest slides to include subdir if needed
+                finalSlides = manifestSlides.map(s => manifestSubdir ? path.join(manifestSubdir, s).replace(/\\/g, '/') : s);
+            } else {
+                finalSlides = slides.sort();
+            }
+
+            console.log(`Found ${finalSlides.length} slides.`);
 
             // Create a new presentation document
             const newPresentation = new Presentation({
@@ -189,16 +203,8 @@ router.post('/upload', authMiddleware, (req, res) => {
                 description,
                 domain,
                 user: userId,
-                // Save the web path that contains the slides (for static serving)
-                folderPath: (function computeWebPath() {
-                    // Build POSIX path under /uploads for URLs
-                    let webPath = path.posix.join('uploads', presentationId);
-                    if (manifestSubdirInZip && manifestSubdirInZip !== '.') {
-                        webPath = path.posix.join(webPath, manifestSubdirInZip);
-                    }
-                    return webPath;
-                })(),
-                slides,
+                folderPath: s3Prefix, // Store S3 prefix
+                slides: finalSlides,
                 thumbnailPath: thumbnailPathWeb || undefined,
             });
 
@@ -208,8 +214,8 @@ router.post('/upload', authMiddleware, (req, res) => {
                 console.log('Presentation saved to DB:', newPresentation._id);
             } catch (saveError) {
                 console.error('Database Save Error:', saveError);
-                // Clean up folder if save fails
-                await fsPromises.rm(presentationDirFs, { recursive: true, force: true }).catch(e => console.error('Cleanup error:', e));
+                // Clean up S3 if save fails
+                await deleteFolderFromS3(s3Prefix).catch(e => console.error('Cleanup error:', e));
                 throw new Error(`Database save failed: ${saveError.message}`);
             }
 
@@ -233,13 +239,8 @@ router.post('/create', authMiddleware, upload.single('thumbnail'), async (req, r
         const userId = req.user.id;
         const thumbFile = req.file;
 
-        // Create a unique folder for the presentation
         const presentationId = `presentation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const uploadsRootFs = path.join(__dirname, '..', 'uploads');
-        const presentationDirFs = path.join(uploadsRootFs, presentationId);
-
-        // Create the directory
-        await fsPromises.mkdir(presentationDirFs, { recursive: true });
+        const s3Prefix = `uploads/${presentationId}`;
 
         // Create a default index.html
         const defaultHtml = `<!DOCTYPE html>
@@ -262,29 +263,23 @@ router.post('/create', authMiddleware, upload.single('thumbnail'), async (req, r
 </body>
 </html>`;
 
-        await fsPromises.writeFile(path.join(presentationDirFs, 'index.html'), defaultHtml);
+        await uploadToS3(`${s3Prefix}/index.html`, defaultHtml, 'text/html');
 
-        // Handle thumbnail if uploaded
+        // Handle thumbnail
         let thumbnailPathWeb = '';
         if (thumbFile) {
-            try {
-                const ext = path.extname(thumbFile.originalname) || path.extname(thumbFile.filename) || '.png';
-                const destThumbFs = path.join(presentationDirFs, `thumbnail${ext}`);
-                await fsPromises.rename(thumbFile.path, destThumbFs);
-                const posixThumb = path.posix.join('/uploads', presentationId, `thumbnail${ext}`);
-                thumbnailPathWeb = posixThumb;
-            } catch (e) {
-                console.error('Failed to move thumbnail:', e);
-            }
+            const ext = path.extname(thumbFile.originalname) || '.png';
+            const thumbKey = `${s3Prefix}/thumbnail${ext}`;
+            await uploadToS3(thumbKey, thumbFile.buffer, thumbFile.mimetype);
+            thumbnailPathWeb = thumbKey;
         }
 
-        // Create a new presentation document
         const newPresentation = new Presentation({
             title,
             description,
             domain,
             user: userId,
-            folderPath: path.posix.join('uploads', presentationId),
+            folderPath: s3Prefix,
             slides: ['index.html'],
             thumbnailPath: thumbnailPathWeb || undefined,
         });
@@ -301,15 +296,14 @@ router.post('/create', authMiddleware, upload.single('thumbnail'), async (req, r
     }
 });
 
-// backend/routes/presentationRoutes.js
 // @route   GET /api/presentations
 // @desc    Get all presentations
 // @access  Private
 router.get('/', async (req, res) => {
     try {
         const presentations = await Presentation.find({})
-            .populate('user', 'name email') // Populate user details
-            .sort({ createdAt: -1 }); // Sort by newest first
+            .populate('user', 'name email')
+            .sort({ createdAt: -1 });
         res.json(presentations);
     } catch (err) {
         console.error(err);
@@ -417,23 +411,19 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     try {
         const presentation = await Presentation.findById(req.params.id);
 
-        // Check if presentation exists and belongs to the user
         if (!presentation || presentation.user.toString() !== req.user.id) {
             return res.status(404).json({ message: 'Presentation not found' });
         }
 
-        // Delete the presentation folder from the file system
-        const folderPath = path.join(__dirname, '..', presentation.folderPath);
-
-        // Use rm with recursive: true (Node 14+) for robust deletion
+        // Delete from S3
         try {
-            await fsPromises.rm(folderPath, { recursive: true, force: true });
+            await deleteFolderFromS3(presentation.folderPath);
         } catch (e) {
-            console.error('Error deleting folder:', e);
-            // Continue to delete from DB even if folder deletion fails (or doesn't exist)
+            console.error('Error deleting from S3:', e);
+            // Continue to delete from DB even if S3 deletion fails (or doesn't exist)
         }
 
-        // Delete the presentation from the database
+        // Delete from DB
         await Presentation.deleteOne({ _id: req.params.id });
 
         res.json({ message: 'Presentation deleted successfully' });
@@ -459,23 +449,15 @@ router.get('/:id/files', async (req, res) => {
         //     return res.status(401).json({ message: 'User not authorized' });
         // }
 
-        const folderPath = path.join(__dirname, '..', presentation.folderPath);
+        const prefix = presentation.folderPath.endsWith('/') ? presentation.folderPath : `${presentation.folderPath}/`;
 
-        // Recursive function to get all files
-        async function getFiles(dir) {
-            const dirents = await fsPromises.readdir(dir, { withFileTypes: true });
-            const files = await Promise.all(dirents.map((dirent) => {
-                const res = path.resolve(dir, dirent.name);
-                if (dirent.isDirectory()) {
-                    return getFiles(res);
-                } else {
-                    return path.relative(folderPath, res);
-                }
-            }));
-            return Array.prototype.concat(...files);
-        }
+        const listCommand = new ListObjectsV2Command({
+            Bucket: BUCKET_NAME,
+            Prefix: prefix
+        });
+        const listResult = await s3Client.send(listCommand);
 
-        const files = await getFiles(folderPath);
+        const files = listResult.Contents ? listResult.Contents.map(obj => obj.Key.replace(prefix, '')) : [];
         res.json(files);
     } catch (err) {
         console.error(err);
@@ -491,8 +473,6 @@ router.get(/^\/([^\/]+)\/files\/(.+)$/, async (req, res) => {
     try {
         const presentationId = req.params[0];
         const filenameParam = req.params[1];
-
-        // Normalize filename (remove leading slashes) and decode
         const filename = decodeURIComponent(filenameParam.replace(/^\/+/, ''));
 
         const presentation = await Presentation.findById(presentationId);
@@ -506,23 +486,14 @@ router.get(/^\/([^\/]+)\/files\/(.+)$/, async (req, res) => {
         //     return res.status(401).json({ message: 'User not authorized' });
         // }
 
-        const folderPath = path.join(__dirname, '..', presentation.folderPath);
-        const filePath = path.join(folderPath, filename);
+        const s3Key = `${presentation.folderPath}/${filename}`;
 
-        // Security check: ensure file is within presentation folder
-        if (!filePath.startsWith(folderPath)) {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        // Check if file exists
         try {
-            await fsPromises.access(filePath);
+            const content = await getObjectContentFromS3(s3Key);
+            res.json({ content });
         } catch (e) {
             return res.status(404).json({ message: 'File not found' });
         }
-
-        const content = await fsPromises.readFile(filePath, 'utf8');
-        res.json({ content });
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Server error' });
@@ -536,8 +507,6 @@ router.put(/^\/([^\/]+)\/files\/(.+)$/, authMiddleware, async (req, res) => {
     try {
         const presentationId = req.params[0];
         const filenameParam = req.params[1];
-
-        // Normalize filename and decode
         const filename = decodeURIComponent(filenameParam.replace(/^\/+/, ''));
 
         const presentation = await Presentation.findById(presentationId);
@@ -555,15 +524,10 @@ router.put(/^\/([^\/]+)\/files\/(.+)$/, authMiddleware, async (req, res) => {
             return res.status(400).json({ message: 'Content is required' });
         }
 
-        const folderPath = path.join(__dirname, '..', presentation.folderPath);
-        const filePath = path.join(folderPath, filename);
+        const s3Key = `${presentation.folderPath}/${filename}`;
+        const contentType = mime.lookup(filename) || 'text/plain';
 
-        // Security check
-        if (!filePath.startsWith(folderPath)) {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        await fsPromises.writeFile(filePath, content, 'utf8');
+        await uploadToS3(s3Key, content, contentType);
         res.json({ message: 'File updated successfully' });
     } catch (err) {
         console.error(err);
@@ -591,28 +555,27 @@ router.post('/:id/files', authMiddleware, async (req, res) => {
             return res.status(400).json({ message: 'Filename is required' });
         }
 
-        // Basic validation for filename
-        if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+        // Basic validation
+        if (filename.includes('..') || filename.includes('\\')) {
             return res.status(400).json({ message: 'Invalid filename' });
         }
 
-        const folderPath = path.join(__dirname, '..', presentation.folderPath);
-        const filePath = path.join(folderPath, filename);
+        const s3Key = `${presentation.folderPath}/${filename}`;
+        const contentType = mime.lookup(filename) || 'text/plain';
 
-        // Check if file already exists
+        // Check if exists (optional, S3 overwrites by default which is often fine, but we can check)
         try {
-            await fsPromises.access(filePath);
+            await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key }));
             return res.status(400).json({ message: 'File already exists' });
         } catch (e) {
-            // File does not exist, proceed
+            // Not found, proceed
         }
 
-        await fsPromises.writeFile(filePath, content || '', 'utf8');
+        await uploadToS3(s3Key, content || '', contentType);
 
-        // Update slides list if it's an HTML file
         if (filename.toLowerCase().endsWith('.html') && !presentation.slides.includes(filename)) {
             presentation.slides.push(filename);
-            presentation.slides.sort(); // Optional: keep sorted
+            presentation.slides.sort();
             await presentation.save();
         }
 
@@ -643,18 +606,8 @@ router.delete(/^\/([^\/]+)\/files\/(.+)$/, authMiddleware, async (req, res) => {
             return res.status(401).json({ message: 'User not authorized' });
         }
 
-        const folderPath = path.join(__dirname, '..', presentation.folderPath);
-        const filePath = path.join(folderPath, filename);
-
-        if (!filePath.startsWith(folderPath)) {
-            return res.status(403).json({ message: 'Access denied' });
-        }
-
-        try {
-            await fsPromises.unlink(filePath);
-        } catch (e) {
-            console.warn('File not found on disk, but removing from DB:', filename);
-        }
+        const s3Key = `${presentation.folderPath}/${filename}`;
+        await deleteObjectFromS3(s3Key);
 
         // Remove from slides list if it's there
         if (presentation.slides.includes(filename)) {
