@@ -40,7 +40,8 @@ const corsOptions = {
 
 // Middleware
 app.use(cors(corsOptions)); // Enable CORS with options
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Ensure uploads and temp directories exist
 const uploadsDir = path.join(__dirname, 'uploads');
