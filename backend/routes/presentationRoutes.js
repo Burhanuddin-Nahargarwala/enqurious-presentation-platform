@@ -416,7 +416,7 @@ router.get('/:id', async (req, res) => {
             try {
                 const jwt = require('jsonwebtoken');
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                if (presentation.user._id.toString() !== decoded.id) {
+                if (presentation.user._id.toString() !== decoded.user.id) {
                     return res.status(403).json({ message: 'Not authorized to view this private presentation' });
                 }
             } catch (e) {
@@ -510,7 +510,7 @@ router.get('/:id/files', async (req, res) => {
             try {
                 const jwt = require('jsonwebtoken');
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                if (presentation.user.toString() !== decoded.id) {
+                if (presentation.user.toString() !== decoded.user.id) {
                     return res.status(403).json({ message: 'Not authorized' });
                 }
             } catch (e) {
@@ -559,7 +559,7 @@ router.get(/^\/([^\/]+)\/files\/(.+)$/, async (req, res) => {
             try {
                 const jwt = require('jsonwebtoken');
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                if (presentation.user.toString() !== decoded.id) {
+                if (presentation.user.toString() !== decoded.user.id) {
                     return res.status(403).json({ message: 'Not authorized' });
                 }
             } catch (e) {
