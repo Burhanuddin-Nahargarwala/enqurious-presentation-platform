@@ -85,14 +85,57 @@ app.get(/^\/uploads\/(.+)/, async (req, res) => {
     const response = await s3Client.send(command);
 
     // Set Content-Type
-    if (response.ContentType) {
-      res.setHeader('Content-Type', response.ContentType);
-    } else {
-      const contentType = mime.lookup(key) || 'application/octet-stream';
-      res.setHeader('Content-Type', contentType);
+    let contentType = response.ContentType;
+    if (!contentType) {
+      contentType = mime.lookup(key) || 'application/octet-stream';
+    }
+    res.setHeader('Content-Type', contentType);
+
+    // If HTML, inject script for keyboard forwarding
+    if (contentType === 'text/html') {
+      const str = await response.Body.transformToString();
+      const script = `
+        <script>
+          window.addEventListener('keydown', function(e) {
+            const isInput = e.target.tagName === 'INPUT' || 
+                            e.target.tagName === 'TEXTAREA' || 
+                            e.target.isContentEditable;
+
+            const send = (key) => window.parent.postMessage({ type: 'PRESENTER_KEYDOWN', key: key }, '*');
+
+            if (e.key === 'Escape') {
+              send('Escape');
+              return;
+            }
+
+            if (['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+              if (isInput) {
+                // If typing, only navigate if Alt is pressed
+                if (e.altKey) {
+                  e.preventDefault();
+                  send(e.key);
+                }
+              } else {
+                // Not typing, always navigate
+                e.preventDefault();
+                send(e.key);
+              }
+            }
+
+            if (e.key === ' ') {
+              if (!isInput) {
+                e.preventDefault();
+                send(' ');
+              }
+            }
+          });
+        </script>
+      `;
+      const modified = str.replace('</body>', `${script}</body>`);
+      return res.send(modified);
     }
 
-    // Pipe S3 stream to response
+    // Pipe S3 stream to response for non-HTML
     response.Body.pipe(res);
   } catch (err) {
     if (err.name === 'NoSuchKey') {

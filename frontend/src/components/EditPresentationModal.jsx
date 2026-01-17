@@ -1,6 +1,6 @@
 // src/components/EditPresentationModal.jsx
 import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, Lock, Globe } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -9,7 +9,8 @@ export function EditPresentationModal({ isOpen, onClose, presentation, onUpdate 
     const [formData, setFormData] = useState({
         title: '',
         description: '',
-        domain: ''
+        domain: '',
+        visibility: 'public'
     });
     const [loading, setLoading] = useState(false);
 
@@ -18,7 +19,8 @@ export function EditPresentationModal({ isOpen, onClose, presentation, onUpdate 
             setFormData({
                 title: presentation.title,
                 description: presentation.description,
-                domain: presentation.domain
+                domain: presentation.domain,
+                visibility: presentation.visibility || 'public'
             });
         }
     }, [presentation]);
@@ -72,6 +74,25 @@ export function EditPresentationModal({ isOpen, onClose, presentation, onUpdate 
                                     onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
                                     required
                                 />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-secondary-700 mb-1">
+                                    Visibility
+                                </label>
+                                <div className="relative">
+                                    <select
+                                        value={formData.visibility}
+                                        onChange={(e) => setFormData({ ...formData, visibility: e.target.value })}
+                                        className="w-full h-10 pl-10 pr-3 rounded-lg border border-secondary-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 appearance-none"
+                                    >
+                                        <option value="public">Public - Visible to everyone</option>
+                                        <option value="private">Private - Visible only to you</option>
+                                    </select>
+                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-500">
+                                        {formData.visibility === 'public' ? <Globe size={18} /> : <Lock size={18} />}
+                                    </div>
+                                </div>
                             </div>
 
                             <div>

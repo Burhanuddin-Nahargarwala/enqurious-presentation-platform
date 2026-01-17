@@ -123,7 +123,7 @@ router.post('/upload', authMiddleware, (req, res) => {
                 return res.status(400).json({ message: 'No file uploaded' });
             }
 
-            const { title, description, domain } = req.body;
+            const { title, description, domain, visibility } = req.body;
             const userId = req.user.id;
 
             // Create a unique ID for the presentation
@@ -206,6 +206,7 @@ router.post('/upload', authMiddleware, (req, res) => {
                 folderPath: s3Prefix, // Store S3 prefix
                 slides: finalSlides,
                 thumbnailPath: thumbnailPathWeb || undefined,
+                visibility: visibility || 'public'
             });
 
             console.log('Saving presentation to database...');
@@ -235,7 +236,7 @@ router.post('/upload', authMiddleware, (req, res) => {
 // @access  Private
 router.post('/create', authMiddleware, upload.single('thumbnail'), async (req, res) => {
     try {
-        const { title, description, domain } = req.body;
+        const { title, description, domain, visibility } = req.body;
         const userId = req.user.id;
         const thumbFile = req.file;
 
@@ -282,6 +283,7 @@ router.post('/create', authMiddleware, upload.single('thumbnail'), async (req, r
             folderPath: s3Prefix,
             slides: ['index.html'],
             thumbnailPath: thumbnailPathWeb || undefined,
+            visibility: visibility || 'public'
         });
 
         await newPresentation.save();
@@ -301,7 +303,24 @@ router.post('/create', authMiddleware, upload.single('thumbnail'), async (req, r
 // @access  Private
 router.get('/', async (req, res) => {
     try {
-        const presentations = await Presentation.find({})
+        const presentations = await Presentation.find({
+            $or: [{ visibility: 'public' }, { visibility: { $exists: false } }]
+        })
+            .populate('user', 'name email')
+            .sort({ createdAt: -1 });
+        res.json(presentations);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// @route   GET /api/presentations/my
+// @desc    Get logged-in user's presentations
+// @access  Private
+router.get('/my', authMiddleware, async (req, res) => {
+    try {
+        const presentations = await Presentation.find({ user: req.user.id })
             .populate('user', 'name email')
             .sort({ createdAt: -1 });
         res.json(presentations);
@@ -316,11 +335,18 @@ router.get('/', async (req, res) => {
 // @access  Private
 router.get('/filters', async (req, res) => {
     try {
-        // Unique domains directly from Presentation collection
-        const domains = await Presentation.distinct('domain');
+        // Unique domains directly from Presentation collection (public only)
+        const domains = await Presentation.find({
+            $or: [{ visibility: 'public' }, { visibility: { $exists: false } }]
+        }).distinct('domain');
 
-        // Unique authors via aggregation to get user names
+        // Unique authors via aggregation to get user names (public only)
         const authorsAgg = await Presentation.aggregate([
+            {
+                $match: {
+                    $or: [{ visibility: 'public' }, { visibility: { $exists: false } }]
+                }
+            },
             { $group: { _id: '$user' } },
             {
                 $lookup: {
@@ -366,7 +392,38 @@ router.get('/:id', async (req, res) => {
             return res.status(404).json({ message: 'Presentation not found' });
         }
 
-        // Note: We intentionally do not restrict by owner here so anyone can present
+        // Check visibility
+        if (presentation.visibility === 'private') {
+            // If private, only allow author
+            // We need to check if user is authenticated and is the owner
+            // Since this route is currently public (no authMiddleware), we need to handle this carefully.
+            // Ideally, we should check for a token if present, or require auth for private presentations.
+
+            // For now, let's assume if it's private, we require a token.
+            // But wait, the route definition is: router.get('/:id', async (req, res) => {
+            // It doesn't have authMiddleware.
+            // We need to manually verify token if present, or return 401/403.
+
+            // Let's use a helper or simple check.
+            // Actually, the requirement says "Private: Visible only to the author".
+            // So we must verify the user.
+
+            const token = req.header('Authorization')?.replace('Bearer ', '');
+            if (!token) {
+                return res.status(401).json({ message: 'Private presentation. Please log in.' });
+            }
+
+            try {
+                const jwt = require('jsonwebtoken');
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                if (presentation.user._id.toString() !== decoded.id) {
+                    return res.status(403).json({ message: 'Not authorized to view this private presentation' });
+                }
+            } catch (e) {
+                return res.status(401).json({ message: 'Invalid token' });
+            }
+        }
+
         res.json(presentation);
     } catch (err) {
         console.error(err);
@@ -379,7 +436,7 @@ router.get('/:id', async (req, res) => {
 // @access  Private
 router.put('/:id', authMiddleware, async (req, res) => {
     try {
-        const { title, description, domain } = req.body;
+        const { title, description, domain, visibility } = req.body;
         let presentation = await Presentation.findById(req.params.id);
 
         if (!presentation) {
@@ -393,7 +450,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
         presentation = await Presentation.findByIdAndUpdate(
             req.params.id,
-            { title, description, domain },
+            { title, description, domain, visibility },
             { new: true, runValidators: true }
         );
 
@@ -444,10 +501,22 @@ router.get('/:id/files', async (req, res) => {
             return res.status(404).json({ message: 'Presentation not found' });
         }
 
-        // Public access: allow anyone to list files
-        // if (presentation.user.toString() !== req.user.id) {
-        //     return res.status(401).json({ message: 'User not authorized' });
-        // }
+        // Check visibility
+        if (presentation.visibility === 'private') {
+            const token = req.header('Authorization')?.replace('Bearer ', '');
+            if (!token) {
+                return res.status(401).json({ message: 'Private presentation. Please log in.' });
+            }
+            try {
+                const jwt = require('jsonwebtoken');
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                if (presentation.user.toString() !== decoded.id) {
+                    return res.status(403).json({ message: 'Not authorized' });
+                }
+            } catch (e) {
+                return res.status(401).json({ message: 'Invalid token' });
+            }
+        }
 
         const prefix = presentation.folderPath.endsWith('/') ? presentation.folderPath : `${presentation.folderPath}/`;
 
@@ -481,10 +550,22 @@ router.get(/^\/([^\/]+)\/files\/(.+)$/, async (req, res) => {
             return res.status(404).json({ message: 'Presentation not found' });
         }
 
-        // Public access: allow anyone to read files
-        // if (presentation.user.toString() !== req.user.id) {
-        //     return res.status(401).json({ message: 'User not authorized' });
-        // }
+        // Check visibility
+        if (presentation.visibility === 'private') {
+            const token = req.header('Authorization')?.replace('Bearer ', '');
+            if (!token) {
+                return res.status(401).json({ message: 'Private presentation. Please log in.' });
+            }
+            try {
+                const jwt = require('jsonwebtoken');
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                if (presentation.user.toString() !== decoded.id) {
+                    return res.status(403).json({ message: 'Not authorized' });
+                }
+            } catch (e) {
+                return res.status(401).json({ message: 'Invalid token' });
+            }
+        }
 
         const s3Key = `${presentation.folderPath}/${filename}`;
 

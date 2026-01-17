@@ -31,6 +31,12 @@ export const presentationApi = {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     }),
 
+  // Get logged-in user's presentations
+  getMyPresentations: (token) =>
+    api.get('/presentations/my', {
+      headers: { Authorization: `Bearer ${token}` }
+    }),
+
   // Get a single presentation (public)
   getPresentation: (id, token) =>
     api.get(`/presentations/${id}`, {

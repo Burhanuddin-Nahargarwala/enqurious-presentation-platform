@@ -2,7 +2,7 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Upload, File, X, Check, AlertCircle, Plus, FileCode } from 'lucide-react';
+import { Upload, File, X, Check, AlertCircle, Plus, FileCode, Lock, Globe } from 'lucide-react';
 import { presentationApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Layout } from '../components/ui/Layout';
@@ -17,7 +17,8 @@ function UploadPage() {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    domain: ''
+    domain: '',
+    visibility: 'public'
   });
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -99,6 +100,7 @@ function UploadPage() {
         data.append('title', formData.title);
         data.append('description', formData.description);
         data.append('domain', formData.domain);
+        data.append('visibility', formData.visibility);
 
         await presentationApi.uploadPresentation(data, token);
         setSuccess(true);
@@ -111,6 +113,7 @@ function UploadPage() {
         data.append('title', formData.title);
         data.append('description', formData.description);
         data.append('domain', formData.domain);
+        data.append('visibility', formData.visibility);
         if (thumbnail) {
           data.append('thumbnail', thumbnail);
         }
@@ -209,6 +212,55 @@ function UploadPage() {
                   placeholder="Briefly describe what this presentation is about..."
                   required
                 />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-secondary-700 mb-3">
+                Visibility
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div
+                  onClick={() => setFormData({ ...formData, visibility: 'public' })}
+                  className={`cursor-pointer border-2 rounded-xl p-4 flex items-start gap-3 transition-all duration-200 ${formData.visibility === 'public'
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-secondary-200 hover:border-primary-200 hover:bg-secondary-50'
+                    }`}
+                >
+                  <div className={`p-2 rounded-lg ${formData.visibility === 'public' ? 'bg-primary-100 text-primary-600' : 'bg-secondary-100 text-secondary-500'}`}>
+                    <Globe size={20} />
+                  </div>
+                  <div>
+                    <h4 className={`font-medium ${formData.visibility === 'public' ? 'text-primary-900' : 'text-secondary-900'}`}>Public</h4>
+                    <p className="text-sm text-secondary-500 mt-1">Visible to everyone in the Explore feed.</p>
+                  </div>
+                  {formData.visibility === 'public' && (
+                    <div className="ml-auto text-primary-600">
+                      <Check size={20} />
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  onClick={() => setFormData({ ...formData, visibility: 'private' })}
+                  className={`cursor-pointer border-2 rounded-xl p-4 flex items-start gap-3 transition-all duration-200 ${formData.visibility === 'private'
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-secondary-200 hover:border-primary-200 hover:bg-secondary-50'
+                    }`}
+                >
+                  <div className={`p-2 rounded-lg ${formData.visibility === 'private' ? 'bg-primary-100 text-primary-600' : 'bg-secondary-100 text-secondary-500'}`}>
+                    <Lock size={20} />
+                  </div>
+                  <div>
+                    <h4 className={`font-medium ${formData.visibility === 'private' ? 'text-primary-900' : 'text-secondary-900'}`}>Private</h4>
+                    <p className="text-sm text-secondary-500 mt-1">Visible only to you in My Presentations.</p>
+                  </div>
+                  {formData.visibility === 'private' && (
+                    <div className="ml-auto text-primary-600">
+                      <Check size={20} />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 

@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { EditPresentationModal } from '../components/EditPresentationModal';
 import { Tooltip } from '../components/ui/Tooltip';
-import { Search, Filter, Eye, Trash2, Plus, Layout as LayoutIcon, Pencil, Settings } from 'lucide-react';
+import { Search, Filter, Eye, Trash2, Plus, Layout as LayoutIcon, Pencil, Settings, Lock, Globe } from 'lucide-react';
 import { presentationApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Layout } from '../components/ui/Layout';
@@ -14,6 +14,7 @@ import { Button } from '../components/ui/Button';
 
 function DashboardPage() {
   const [presentations, setPresentations] = useState([]);
+  const [activeTab, setActiveTab] = useState('explore'); // 'explore' or 'my'
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filters, setFilters] = useState({ search: '', domain: '', author: '' });
@@ -24,7 +25,7 @@ function DashboardPage() {
 
   useEffect(() => {
     fetchPresentations();
-  }, [token, filters]);
+  }, [token, filters, activeTab]);
 
   useEffect(() => {
     const loadFilters = async () => {
@@ -44,7 +45,12 @@ function DashboardPage() {
     setError('');
 
     try {
-      const response = await presentationApi.getPresentations(token);
+      let response;
+      if (activeTab === 'my') {
+        response = await presentationApi.getMyPresentations(token);
+      } else {
+        response = await presentationApi.getPresentations(token);
+      }
       let filteredPresentations = response.data;
 
       if (filters.search) {
@@ -132,6 +138,49 @@ function DashboardPage() {
                 Login to Upload
               </Button>
             </Link>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-secondary-200">
+          <button
+            onClick={() => setActiveTab('explore')}
+            className={`px-6 py-3 text-sm font-medium transition-colors relative ${activeTab === 'explore'
+                ? 'text-primary-600'
+                : 'text-secondary-500 hover:text-secondary-700'
+              }`}
+          >
+            <div className="flex items-center gap-2">
+              <Globe size={18} />
+              Explore
+            </div>
+            {activeTab === 'explore' && (
+              <motion.div
+                layoutId="activeTab"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-600"
+              />
+            )}
+          </button>
+
+          {user && (
+            <button
+              onClick={() => setActiveTab('my')}
+              className={`px-6 py-3 text-sm font-medium transition-colors relative ${activeTab === 'my'
+                  ? 'text-primary-600'
+                  : 'text-secondary-500 hover:text-secondary-700'
+                }`}
+            >
+              <div className="flex items-center gap-2">
+                <Lock size={18} />
+                My Presentations
+              </div>
+              {activeTab === 'my' && (
+                <motion.div
+                  layoutId="activeTab"
+                  className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-600"
+                />
+              )}
+            </button>
           )}
         </div>
 
@@ -229,6 +278,12 @@ function DashboardPage() {
                         <span className="inline-block px-2 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-medium mb-2">
                           {presentation.domain}
                         </span>
+                        {presentation.visibility === 'private' && (
+                          <span className="ml-2 inline-block px-2 py-1 rounded-full bg-secondary-100 text-secondary-600 text-xs font-medium mb-2 items-center gap-1">
+                            <Lock size={10} className="inline mr-1" />
+                            Private
+                          </span>
+                        )}
                         <Tooltip content={presentation.title}>
                           <CardTitle className="text-lg line-clamp-1">
                             {presentation.title}

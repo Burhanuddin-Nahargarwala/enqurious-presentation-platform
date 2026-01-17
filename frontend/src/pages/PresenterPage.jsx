@@ -73,7 +73,9 @@ function PresenterPage() {
     resetControlsTimeout();
 
     const handleMouseMove = () => {
-      resetControlsTimeout();
+      if (!document.fullscreenElement) {
+        resetControlsTimeout();
+      }
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -119,10 +121,14 @@ function PresenterPage() {
         console.error(`Error attempting to enable fullscreen: ${err.message} `);
       });
       setFullscreen(true);
+      setShowControls(false); // Hide controls immediately
+      setShowInfo(false);
     } else {
       if (document.exitFullscreen) {
         document.exitFullscreen();
         setFullscreen(false);
+        setShowControls(true); // Show controls immediately
+        setShowInfo(true);
       }
     }
     setTimeout(updateScale, 50);
@@ -160,12 +166,20 @@ function PresenterPage() {
   };
 
   useEffect(() => {
+    const handleMessage = (e) => {
+      if (e.data && e.data.type === 'PRESENTER_KEYDOWN') {
+        handleKeyDown({ key: e.data.key });
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('message', handleMessage);
     window.addEventListener('resize', updateScale);
     window.addEventListener('orientationchange', updateScale);
     updateScale();
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('message', handleMessage);
       window.removeEventListener('resize', updateScale);
       window.removeEventListener('orientationchange', updateScale);
     };
